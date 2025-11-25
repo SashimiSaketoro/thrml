@@ -173,9 +173,18 @@ impl AbstractObserver for MomentAccumulatorObserver {
         let sampled_state = from_global_state(&global_state, spec, &self.blocks_to_sample, device);
         
         // Apply transformation if needed (for spin: bool -> ±1)
+        // Only transform spin-type blocks, leave categorical blocks unchanged
         let transformed_state: Vec<Tensor<WgpuBackend, 1>> = if self.transform_to_spin {
             sampled_state.iter()
-                .map(|s| s.clone() * 2.0 - 1.0)
+                .zip(self.blocks_to_sample.iter())
+                .map(|(s, block)| {
+                    // Only apply spin transformation to spin-type blocks
+                    if matches!(block.node_type(), thrml_core::node::NodeType::Spin) {
+                        s.clone() * 2.0 - 1.0  // Convert 0/1 to -1/+1
+                    } else {
+                        s.clone()  // Keep categorical values unchanged
+                    }
+                })
                 .collect()
         } else {
             sampled_state
@@ -270,6 +279,79 @@ mod tests {
         
         assert_eq!(observer.flat_nodes_list.len(), 2, "Should have 2 unique nodes");
         assert_eq!(observer.flat_to_full_moment_slices.len(), 2, "Should have 2 moment types");
+    }
+    
+    /// Test that moment observer correctly handles mixed node types (spin + categorical).
+    /// This is a port of Python test_observers.py::test_preserves_mixed_node_values
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn test_preserves_mixed_node_values() {
+        use thrml_core::backend::{init_gpu_device, ensure_metal_backend};
+        use indexmap::IndexMap;
+        
+        ensure_metal_backend();
+        let device = init_gpu_device();
+        
+        // Create mixed node types
+        let spin_node = Node::new(NodeType::Spin);
+        let cat_node = Node::new(NodeType::Categorical { n_categories: 8 });
+        
+        // Create blocks - each block contains nodes of one type
+        let spin_block = Block::new(vec![spin_node.clone()]).expect("spin block");
+        let cat_block = Block::new(vec![cat_node.clone()]).expect("cat block");
+        
+        // Create moment spec: product of spin and categorical values
+        // [[spin_node, cat_node]] means compute spin * cat
+        let moment_spec: MomentSpec = vec![
+            vec![vec![spin_node.clone(), cat_node.clone()]]
+        ];
+        
+        // Use transform_to_spin=false to match Python's default identity transform
+        let observer = MomentAccumulatorObserver::new(moment_spec, false);
+        
+        // Create BlockSpec
+        let mut node_shape_dtypes = IndexMap::new();
+        node_shape_dtypes.insert(
+            NodeType::Spin,
+            thrml_core::node::TensorSpec {
+                shape: vec![1],
+                dtype: burn::tensor::DType::Bool,
+            },
+        );
+        node_shape_dtypes.insert(
+            NodeType::Categorical { n_categories: 8 },
+            thrml_core::node::TensorSpec {
+                shape: vec![1],
+                dtype: burn::tensor::DType::U8,
+            },
+        );
+        
+        let all_blocks = vec![spin_block.clone(), cat_block.clone()];
+        let block_spec = BlockSpec::new(all_blocks, node_shape_dtypes).expect("block spec");
+        
+        // Initialize carry
+        let carry = observer.init(&device);
+        
+        // Create state: spin=True (1.0), categorical=2
+        let state_spin: Tensor<WgpuBackend, 1> = Tensor::from_data([1.0f32], &device);
+        let state_cat: Tensor<WgpuBackend, 1> = Tensor::from_data([2.0f32], &device);
+        let state_free = vec![state_spin, state_cat];
+        let state_clamped: Vec<Tensor<WgpuBackend, 1>> = vec![];
+        
+        // Observe
+        let (new_carry, _) = observer.observe(
+            &block_spec,
+            &state_free,
+            &state_clamped,
+            carry,
+            0,
+            &device,
+        );
+        
+        // Check result: True (1) * 2 = 2
+        let result: Vec<f32> = new_carry[0].clone().into_data().to_vec().expect("read result");
+        assert_eq!(result.len(), 1);
+        assert!((result[0] - 2.0).abs() < 1e-6, "Expected 2.0, got {}", result[0]);
     }
 }
 
