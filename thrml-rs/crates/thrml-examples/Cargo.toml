@@ -1,0 +1,30 @@
+[package]
+name = "thrml-examples"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[example]]
+name = "ising_chain"
+path = "examples/ising_chain.rs"
+
+[dependencies]
+thrml-core = { path = "../thrml-core" }
+thrml-samplers = { path = "../thrml-samplers" }
+thrml-models = { path = "../thrml-models" }
+thrml-observers = { path = "../thrml-observers" }
+burn = { version = "0.19", default-features = false }
+burn-wgpu = { version = "0.19", default-features = false, optional = true }
+
+[features]
+default = ["gpu"]
+gpu = [
+    "thrml-core/gpu",
+    "thrml-samplers/gpu",
+    "thrml-models/gpu",
+    "thrml-observers/gpu",
+    "burn/wgpu",
+    "burn-wgpu",
+]
+

@@ -1,0 +1,4 @@
+[wgpu]
+backend = "metal"
+queue_count = 1
+memory_config = "efficient"

@@ -1,0 +1,188 @@
+name: Rust CI
+
+on:
+  push:
+    branches:
+      - main
+      - thrml-rs
+    paths:
+      - 'thrml-rs/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    branches:
+      - main
+      - thrml-rs
+    paths:
+      - 'thrml-rs/**'
+      - '.github/workflows/rust.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable, 1.75.0]  # MSRV
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy, rustfmt
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            thrml-rs/target/
+          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('thrml-rs/**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.rust }}-
+      
+      - name: Check (no GPU)
+        working-directory: thrml-rs
+        run: cargo check --workspace --no-default-features
+      
+      - name: Check (with GPU)
+        working-directory: thrml-rs
+        run: cargo check --workspace --features gpu
+
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            thrml-rs/target/
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('thrml-rs/**/Cargo.lock') }}
+      
+      - name: Run tests (no GPU - CI safe)
+        working-directory: thrml-rs
+        run: cargo test --workspace --no-default-features
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+          components: clippy
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            thrml-rs/target/
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('thrml-rs/**/Cargo.lock') }}
+      
+      - name: Clippy
+        working-directory: thrml-rs
+        run: cargo clippy --workspace --no-default-features -- -D warnings
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      
+      - name: Check formatting
+        working-directory: thrml-rs
+        run: cargo fmt --all -- --check
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            thrml-rs/target/
+          key: ${{ runner.os }}-cargo-docs-${{ hashFiles('thrml-rs/**/Cargo.lock') }}
+      
+      - name: Build docs
+        working-directory: thrml-rs
+        run: cargo doc --workspace --no-deps --no-default-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # GPU tests only on macOS with Metal
+  test-gpu:
+    name: GPU Tests (macOS Metal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            thrml-rs/target/
+          key: ${{ runner.os }}-cargo-gpu-${{ hashFiles('thrml-rs/**/Cargo.lock') }}
+      
+      - name: Run GPU tests
+        working-directory: thrml-rs
+        run: cargo test --workspace --features gpu
+        continue-on-error: true  # GPU may not be available in CI
+
