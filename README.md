@@ -1,6 +1,10 @@
+<div align="center">
+  <img src="docs/_static/logo/logo.svg" alt="THRML Logo" width="150" style="margin-bottom: 10px;">
+</div>
+
 <h1 align='center'>THRML</h1>
 
-THRML is a JAX library for building and sampling probabilistic graphical models, with a focus on efficient block Gibbs sampling and energy-based models. Extropic is developing hardware to make sampling from certain classes of discrete PGMs massively more energy‑efficient; THRML provides GPU‑accelerated tools for block sampling on sparse, heterogeneous graphs, making it a natural place to prototype today and experiment with future Extropic hardware.
+THRML is a JAX library for building and sampling probabilistic graphical models, with a focus on efficient block Gibbs sampling and energy-based models. Extropic is developing hardware to make sampling from certain classes of discrete PGMs massively more energy efficient; THRML provides GPU‑accelerated tools for block sampling on sparse, heterogeneous graphs, making it a natural place to prototype today and experiment with future Extropic hardware.
 
 Features include:
 
@@ -10,7 +14,7 @@ Features include:
 - Discrete EBM utilities
 - Enables early experimentation with future Extropic hardware
 
-From a technical point of view, the internal structure compiles factor-based interactions to a compact "global" state representation, minimising Python loops and maximising array-level parallelism in JAX.
+From a technical point of view, the internal structure compiles factor-based interactions to a compact "global" state representation, minimizing Python loops and maximizing array-level parallelism in JAX.
 
 ## Installation
 
@@ -20,10 +24,32 @@ Requires Python 3.10+.
 pip install thrml
 ```
 
+or
+
+```bash
+uv pip install thrml
+```
+
 ## Documentation
 
 Available at [docs.thrml.ai](https://docs.thrml.ai/en/latest/).
 
+
+## Citing THRML
+
+If you use THRML in your research, please cite us!
+
+```bibtex
+@misc{jelinčič2025efficientprobabilistichardwarearchitecture,
+      title={An efficient probabilistic hardware architecture for diffusion-like models}, 
+      author={Andraž Jelinčič and Owen Lockwood and Akhil Garlapati and Guillaume Verdon and Trevor McCourt},
+      year={2025},
+      eprint={2510.23972},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2510.23972}, 
+}
+```
 
 ## Quick example
 
@@ -51,30 +77,4 @@ init_state = hinton_init(k_init, model, free_blocks, ())
 schedule = SamplingSchedule(n_warmup=100, n_samples=1000, steps_per_sample=2)
 
 samples = sample_states(k_samp, program, schedule, init_state, [], [Block(nodes)])
-```
-
-## Developing
-
-To get started, you'll need to create a virtual environment and install the requirements:
-
-```bash
-# Create a virtual environment
-python -m venv venv
-
-# Activate the virtual environment
-source venv/bin/activate
-
-# Install the package with development dependencies
-pip install -e ".[development,testing,examples]"
-
-# Install pre-commit hooks
-pre-commit install
-```
-
-The pre-commit hooks will automatically run code formatting and linting tools (ruff, black, isort, pyright) on every commit to ensure consistent style.
-
-If you want to skip pre-commit (for a WIP commit), you can use the `--no-verify` flag:
-
-```bash
-git commit --no-verify -m "Your commit message"
 ```

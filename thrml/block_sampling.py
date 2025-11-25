@@ -171,6 +171,10 @@ class BlockSamplingProgram(eqx.Module):
         self.gibbs_spec = gibbs_spec
         self.samplers = samplers
 
+        n_free_blocks = len(self.gibbs_spec.free_blocks)
+        if len(self.samplers) != n_free_blocks:
+            raise ValueError(f"Expected {n_free_blocks} samplers, received {len(self.samplers)}")
+
         # first, construct a map from every head node to each interaction it
         # shows up in and where it shows up in that interaction
 
@@ -357,7 +361,7 @@ def sample_blocks(
     - Updated free-block state list and sampler-state list.
     """
 
-    # gaurdrail state/block compatability here as everything else calls this
+    # gaurdrail state/block compatibility here as everything else calls this
 
     sds = {node_type: jax.tree.unflatten(*sd) for node_type, sd in program.gibbs_spec.node_shape_dtypes.items()}
     verify_block_state(program.gibbs_spec.free_blocks, state_free, sds, -1)
