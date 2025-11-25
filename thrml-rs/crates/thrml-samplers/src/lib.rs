@@ -31,22 +31,22 @@
 //! // 100 warmup steps, 1000 samples, 5 steps between samples
 //! ```
 
-#![recursion_limit = "256"]  // Required for burn-wgpu
+#![recursion_limit = "256"] // Required for burn-wgpu
 
-pub mod sampler;
 pub mod bernoulli;
+pub mod program;
+pub mod rng;
+pub mod sampler;
+pub mod sampling;
+pub mod schedule;
 pub mod softmax;
 pub mod spin_gibbs;
-pub mod program;
-pub mod schedule;
-pub mod rng;
-pub mod sampling;
 
-pub use sampler::*;
 pub use bernoulli::*;
+pub use program::*;
+pub use rng::*;
+pub use sampler::*;
+pub use sampling::*;
+pub use schedule::*;
 pub use softmax::*;
 pub use spin_gibbs::*;
-pub use program::*;
-pub use schedule::*;
-pub use rng::*;
-pub use sampling::*;

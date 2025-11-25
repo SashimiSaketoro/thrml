@@ -1,7 +1,7 @@
-use once_cell::sync::Lazy;
-use std::sync::Mutex;
 use burn::tensor::DType;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NodeType {
@@ -11,7 +11,7 @@ pub enum NodeType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Node {
-    id: usize,  // Assigned by IndexSet insertion order
+    id: usize, // Assigned by IndexSet insertion order
     node_type: NodeType,
 }
 
@@ -25,11 +25,11 @@ impl Node {
         *counter += 1;
         Node { id, node_type }
     }
-    
+
     pub fn id(&self) -> usize {
         self.id
     }
-    
+
     pub fn node_type(&self) -> &NodeType {
         &self.node_type
     }
@@ -44,11 +44,16 @@ pub struct TensorSpec {
 
 impl TensorSpec {
     pub fn for_spin() -> Self {
-        Self { shape: vec![], dtype: DType::Bool }
+        Self {
+            shape: vec![],
+            dtype: DType::Bool,
+        }
     }
-    
+
     pub fn for_categorical(_n_categories: u8) -> Self {
-        Self { shape: vec![], dtype: DType::U8 }
+        Self {
+            shape: vec![],
+            dtype: DType::U8,
+        }
     }
 }
-

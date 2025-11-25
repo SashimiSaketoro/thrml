@@ -30,15 +30,14 @@
 //! - [`ising::estimate_kl_grad`]: Estimate KL divergence gradients
 //! - [`ising::hinton_init`]: Initialize states from marginal biases
 
-#![recursion_limit = "256"]  // Required for burn-wgpu
+#![recursion_limit = "256"] // Required for burn-wgpu
 
-pub mod factor;
-pub mod ebm;
 pub mod discrete_ebm;
+pub mod ebm;
+pub mod factor;
 pub mod ising;
 
-pub use factor::*;
-pub use ebm::*;
 pub use discrete_ebm::*;
+pub use ebm::*;
+pub use factor::*;
 pub use ising::*;
-

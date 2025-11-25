@@ -1,5 +1,5 @@
-use std::ops::Add;
 use crate::node::{Node, NodeType};
+use std::ops::Add;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Block {
@@ -18,25 +18,28 @@ impl Block {
                 return Err("All nodes in a block must be of the same type".to_string());
             }
         }
-        Ok(Block { nodes, node_type: first_type })
+        Ok(Block {
+            nodes,
+            node_type: first_type,
+        })
     }
-    
+
     pub fn node_type(&self) -> &NodeType {
         &self.node_type
     }
-    
+
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
-    
+
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
-    
+
     pub fn iter(&self) -> std::slice::Iter<'_, Node> {
         self.nodes.iter()
     }
@@ -60,4 +63,3 @@ impl std::ops::Index<usize> for Block {
         &self.nodes[index]
     }
 }
-

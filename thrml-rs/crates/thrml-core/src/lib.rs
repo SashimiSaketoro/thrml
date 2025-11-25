@@ -21,19 +21,18 @@
 //! let device = init_gpu_device();
 //! ```
 
-#![recursion_limit = "256"]  // Required for burn-wgpu
+#![recursion_limit = "256"] // Required for burn-wgpu
 
 pub mod backend;
-pub mod node;
 pub mod block;
 pub mod blockspec;
-pub mod state_tree;
 pub mod interaction;
+pub mod node;
+pub mod state_tree;
 
 pub use backend::*;
-pub use node::*;
 pub use block::*;
 pub use blockspec::*;
-pub use state_tree::*;
 pub use interaction::*;
-
+pub use node::*;
+pub use state_tree::*;

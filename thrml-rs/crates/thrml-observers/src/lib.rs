@@ -26,13 +26,12 @@
 //! let observer = MomentAccumulatorObserver::new(spec, true); // spin transform
 //! ```
 
-#![recursion_limit = "256"]  // Required for burn-wgpu
+#![recursion_limit = "256"] // Required for burn-wgpu
 
+pub mod moment;
 pub mod observer;
 pub mod state_observer;
-pub mod moment;
 
+pub use moment::*;
 pub use observer::*;
 pub use state_observer::*;
-pub use moment::*;
-

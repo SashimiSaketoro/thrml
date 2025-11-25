@@ -1,29 +1,29 @@
 //! MomentAccumulatorObserver - Observer that accumulates moment statistics.
-//! 
+//!
 //! This observer computes running sums of products of state variables:
 //! Σ_i f(x_1^i) * f(x_2^i) * ... * f(x_N^i)
-//! 
+//!
 //! where f is a transformation function applied to the state values.
 
+use crate::observer::AbstractObserver;
 use burn::tensor::Tensor;
+use std::collections::HashMap;
 use thrml_core::backend::WgpuBackend;
 use thrml_core::block::Block;
 use thrml_core::blockspec::BlockSpec;
 use thrml_core::node::Node;
 use thrml_core::state_tree::{block_state_to_global, from_global_state};
-use crate::observer::AbstractObserver;
-use std::collections::HashMap;
 
 /// Moment specification: defines which nodes to compute moments for.
-/// 
-/// Structure: Vec<Vec<Vec<Node>>>
+///
+/// Structure: `Vec<Vec<Vec<Node>>>`
 /// - Outer Vec: different moment types (e.g., first moments, second moments)
 /// - Middle Vec: groups within a moment type (e.g., individual nodes for first moments)
 /// - Inner Vec: nodes involved in each moment computation
 pub type MomentSpec = Vec<Vec<Vec<Node>>>;
 
 /// Observer that accumulates and updates provided moments.
-/// 
+///
 /// This observer accumulates a running sum of products of state variables,
 /// but does not scale by the number of samples (caller must divide by n_samples).
 pub struct MomentAccumulatorObserver {
@@ -41,9 +41,9 @@ pub struct MomentAccumulatorObserver {
 
 impl MomentAccumulatorObserver {
     /// Create a new MomentAccumulatorObserver.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `moment_spec` - A 3-depth sequence defining which moments to compute.
     ///   First level: different moment types (e.g., first vs second moments)
     ///   Second level: groups within a moment type
@@ -55,14 +55,14 @@ impl MomentAccumulatorObserver {
         let mut flat_to_full_moment_slices = Vec::new();
         let mut nodes_by_type: HashMap<String, Vec<Node>> = HashMap::new();
         let mut flat_to_type_slices: HashMap<String, Vec<usize>> = HashMap::new();
-        
+
         for moment in &moment_spec {
             // moment = list of "rows" => each row is a list of nodes
             let mut moment_slice: Vec<Vec<usize>> = Vec::new();
-            
+
             for nodes in moment {
                 let mut row_slice: Vec<usize> = Vec::new();
-                
+
                 for node in nodes {
                     // Get or assign index
                     let idx = if let Some(&existing_idx) = node_to_flat_idx.get(node) {
@@ -73,25 +73,28 @@ impl MomentAccumulatorObserver {
                         flat_nodes_list.push(node.clone());
                         new_idx
                     };
-                    
+
                     row_slice.push(idx);
-                    
+
                     // Track by node type
                     let type_key = format!("{:?}", node.node_type());
-                    nodes_by_type.entry(type_key.clone()).or_default().push(node.clone());
+                    nodes_by_type
+                        .entry(type_key.clone())
+                        .or_default()
+                        .push(node.clone());
                     flat_to_type_slices.entry(type_key).or_default().push(idx);
                 }
-                
+
                 moment_slice.push(row_slice);
             }
-            
+
             flat_to_full_moment_slices.push(moment_slice);
         }
-        
+
         // Build blocks to sample and type slices
         let mut blocks_to_sample = Vec::new();
         let mut flat_to_type_slices_list = Vec::new();
-        
+
         for (_, nodes) in nodes_by_type {
             if !nodes.is_empty() {
                 if let Ok(block) = Block::new(nodes) {
@@ -99,11 +102,11 @@ impl MomentAccumulatorObserver {
                 }
             }
         }
-        
+
         for (_type_key, slices) in flat_to_type_slices {
             flat_to_type_slices_list.push(slices);
         }
-        
+
         MomentAccumulatorObserver {
             blocks_to_sample,
             flat_nodes_list,
@@ -112,11 +115,11 @@ impl MomentAccumulatorObserver {
             transform_to_spin,
         }
     }
-    
+
     /// Create a moment spec for first and second moments of an Ising model.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `first_moment_nodes` - Nodes for first moment computation
     /// * `second_moment_edges` - Node pairs for second moment computation
     pub fn ising_moment_spec(
@@ -124,23 +127,23 @@ impl MomentAccumulatorObserver {
         second_moment_edges: &[(Node, Node)],
     ) -> MomentSpec {
         let mut spec = Vec::new();
-        
+
         // First moments: each node separately
         if !first_moment_nodes.is_empty() {
-            let first_moments: Vec<Vec<Node>> = first_moment_nodes.iter()
-                .map(|n| vec![n.clone()])
-                .collect();
+            let first_moments: Vec<Vec<Node>> =
+                first_moment_nodes.iter().map(|n| vec![n.clone()]).collect();
             spec.push(first_moments);
         }
-        
+
         // Second moments: pairs of nodes
         if !second_moment_edges.is_empty() {
-            let second_moments: Vec<Vec<Node>> = second_moment_edges.iter()
+            let second_moments: Vec<Vec<Node>> = second_moment_edges
+                .iter()
                 .map(|(n1, n2)| vec![n1.clone(), n2.clone()])
                 .collect();
             spec.push(second_moments);
         }
-        
+
         spec
     }
 }
@@ -150,7 +153,7 @@ pub type MomentCarry = Vec<Tensor<WgpuBackend, 1>>;
 
 impl AbstractObserver for MomentAccumulatorObserver {
     type ObserveCarry = MomentCarry;
-    
+
     fn observe(
         &self,
         spec: &BlockSpec,
@@ -161,46 +164,49 @@ impl AbstractObserver for MomentAccumulatorObserver {
         device: &burn::backend::wgpu::WgpuDevice,
     ) -> (MomentCarry, Option<Vec<Tensor<WgpuBackend, 1>>>) {
         // Combine free and clamped states
-        let combined_state: Vec<Tensor<WgpuBackend, 1>> = state_free.iter()
+        let combined_state: Vec<Tensor<WgpuBackend, 1>> = state_free
+            .iter()
             .chain(state_clamped.iter())
             .cloned()
             .collect();
-        
+
         // Convert to global state
         let global_state = block_state_to_global(&combined_state, spec);
-        
+
         // Extract states for our blocks
         let sampled_state = from_global_state(&global_state, spec, &self.blocks_to_sample, device);
-        
+
         // Apply transformation if needed (for spin: bool -> ±1)
         // Only transform spin-type blocks, leave categorical blocks unchanged
         let transformed_state: Vec<Tensor<WgpuBackend, 1>> = if self.transform_to_spin {
-            sampled_state.iter()
+            sampled_state
+                .iter()
                 .zip(self.blocks_to_sample.iter())
                 .map(|(s, block)| {
                     // Only apply spin transformation to spin-type blocks
                     if matches!(block.node_type(), thrml_core::node::NodeType::Spin) {
-                        s.clone() * 2.0 - 1.0  // Convert 0/1 to -1/+1
+                        s.clone() * 2.0 - 1.0 // Convert 0/1 to -1/+1
                     } else {
-                        s.clone()  // Keep categorical values unchanged
+                        s.clone() // Keep categorical values unchanged
                     }
                 })
                 .collect()
         } else {
             sampled_state
         };
-        
+
         // Build flat state tensor
         let n_flat = self.flat_nodes_list.len();
         let mut flat_data = vec![0.0f32; n_flat];
-        
+
         for (type_idx, type_slice) in self.flat_to_type_slices_list.iter().enumerate() {
             if type_idx < transformed_state.len() {
-                let state_data: Vec<f32> = transformed_state[type_idx].clone()
+                let state_data: Vec<f32> = transformed_state[type_idx]
+                    .clone()
                     .into_data()
                     .to_vec()
                     .expect("read state data");
-                
+
                 for (i, &flat_idx) in type_slice.iter().enumerate() {
                     if i < state_data.len() && flat_idx < n_flat {
                         flat_data[flat_idx] = state_data[i];
@@ -208,14 +214,14 @@ impl AbstractObserver for MomentAccumulatorObserver {
                 }
             }
         }
-        
+
         // Accumulate moments
         let mut new_carry = carry;
-        
+
         for (moment_idx, moment_slices) in self.flat_to_full_moment_slices.iter().enumerate() {
             // Compute product for each group in this moment type
             let mut updates = Vec::new();
-            
+
             for group_slices in moment_slices {
                 // Compute product of all values in this group
                 let mut product = 1.0f32;
@@ -226,24 +232,23 @@ impl AbstractObserver for MomentAccumulatorObserver {
                 }
                 updates.push(product);
             }
-            
+
             // Add to carry
             if moment_idx < new_carry.len() {
-                let update_tensor: Tensor<WgpuBackend, 1> = Tensor::from_data(
-                    updates.as_slice(),
-                    device,
-                );
+                let update_tensor: Tensor<WgpuBackend, 1> =
+                    Tensor::from_data(updates.as_slice(), device);
                 new_carry[moment_idx] = new_carry[moment_idx].clone() + update_tensor;
             }
         }
-        
+
         // MomentAccumulatorObserver doesn't return observations, only updates carry
         (new_carry, None)
     }
-    
+
     fn init(&self, device: &burn::backend::wgpu::WgpuDevice) -> MomentCarry {
         // Initialize carry with zeros for each moment type
-        self.flat_to_full_moment_slices.iter()
+        self.flat_to_full_moment_slices
+            .iter()
             .map(|moment_slices| {
                 let n_groups = moment_slices.len();
                 Tensor::<WgpuBackend, 1>::zeros([n_groups], device)
@@ -256,59 +261,65 @@ impl AbstractObserver for MomentAccumulatorObserver {
 mod tests {
     use super::*;
     use thrml_core::node::NodeType;
-    
+
     #[cfg(feature = "gpu")]
     #[test]
     fn test_moment_observer_creation() {
-        use thrml_core::backend::{init_gpu_device, ensure_metal_backend};
-        
+        use thrml_core::backend::{ensure_metal_backend, init_gpu_device};
+
         ensure_metal_backend();
         let _device = init_gpu_device();
-        
+
         // Create some test nodes
         let node1 = Node::new(NodeType::Spin);
         let node2 = Node::new(NodeType::Spin);
-        
+
         // Create moment spec for first and second moments
         let spec = MomentAccumulatorObserver::ising_moment_spec(
             &[node1.clone(), node2.clone()],
             &[(node1.clone(), node2.clone())],
         );
-        
+
         let observer = MomentAccumulatorObserver::new(spec, true);
-        
-        assert_eq!(observer.flat_nodes_list.len(), 2, "Should have 2 unique nodes");
-        assert_eq!(observer.flat_to_full_moment_slices.len(), 2, "Should have 2 moment types");
+
+        assert_eq!(
+            observer.flat_nodes_list.len(),
+            2,
+            "Should have 2 unique nodes"
+        );
+        assert_eq!(
+            observer.flat_to_full_moment_slices.len(),
+            2,
+            "Should have 2 moment types"
+        );
     }
-    
+
     /// Test that moment observer correctly handles mixed node types (spin + categorical).
     /// This is a port of Python test_observers.py::test_preserves_mixed_node_values
     #[cfg(feature = "gpu")]
     #[test]
     fn test_preserves_mixed_node_values() {
-        use thrml_core::backend::{init_gpu_device, ensure_metal_backend};
         use indexmap::IndexMap;
-        
+        use thrml_core::backend::{ensure_metal_backend, init_gpu_device};
+
         ensure_metal_backend();
         let device = init_gpu_device();
-        
+
         // Create mixed node types
         let spin_node = Node::new(NodeType::Spin);
         let cat_node = Node::new(NodeType::Categorical { n_categories: 8 });
-        
+
         // Create blocks - each block contains nodes of one type
         let spin_block = Block::new(vec![spin_node.clone()]).expect("spin block");
         let cat_block = Block::new(vec![cat_node.clone()]).expect("cat block");
-        
+
         // Create moment spec: product of spin and categorical values
         // [[spin_node, cat_node]] means compute spin * cat
-        let moment_spec: MomentSpec = vec![
-            vec![vec![spin_node.clone(), cat_node.clone()]]
-        ];
-        
+        let moment_spec: MomentSpec = vec![vec![vec![spin_node.clone(), cat_node.clone()]]];
+
         // Use transform_to_spin=false to match Python's default identity transform
         let observer = MomentAccumulatorObserver::new(moment_spec, false);
-        
+
         // Create BlockSpec
         let mut node_shape_dtypes = IndexMap::new();
         node_shape_dtypes.insert(
@@ -325,33 +336,34 @@ mod tests {
                 dtype: burn::tensor::DType::U8,
             },
         );
-        
+
         let all_blocks = vec![spin_block.clone(), cat_block.clone()];
         let block_spec = BlockSpec::new(all_blocks, node_shape_dtypes).expect("block spec");
-        
+
         // Initialize carry
         let carry = observer.init(&device);
-        
+
         // Create state: spin=True (1.0), categorical=2
         let state_spin: Tensor<WgpuBackend, 1> = Tensor::from_data([1.0f32], &device);
         let state_cat: Tensor<WgpuBackend, 1> = Tensor::from_data([2.0f32], &device);
         let state_free = vec![state_spin, state_cat];
         let state_clamped: Vec<Tensor<WgpuBackend, 1>> = vec![];
-        
+
         // Observe
-        let (new_carry, _) = observer.observe(
-            &block_spec,
-            &state_free,
-            &state_clamped,
-            carry,
-            0,
-            &device,
-        );
-        
+        let (new_carry, _) =
+            observer.observe(&block_spec, &state_free, &state_clamped, carry, 0, &device);
+
         // Check result: True (1) * 2 = 2
-        let result: Vec<f32> = new_carry[0].clone().into_data().to_vec().expect("read result");
+        let result: Vec<f32> = new_carry[0]
+            .clone()
+            .into_data()
+            .to_vec()
+            .expect("read result");
         assert_eq!(result.len(), 1);
-        assert!((result[0] - 2.0).abs() < 1e-6, "Expected 2.0, got {}", result[0]);
+        assert!(
+            (result[0] - 2.0).abs() < 1e-6,
+            "Expected 2.0, got {}",
+            result[0]
+        );
     }
 }
-

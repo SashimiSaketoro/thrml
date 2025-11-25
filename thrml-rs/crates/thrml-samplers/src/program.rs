@@ -1,13 +1,13 @@
+use crate::sampler::AbstractConditionalSampler;
 use burn::tensor::Tensor;
+use indexmap::IndexMap;
+use std::collections::HashMap;
 use thrml_core::backend::WgpuBackend;
 use thrml_core::block::Block;
 use thrml_core::blockspec::BlockSpec;
 use thrml_core::interaction::InteractionGroup;
 use thrml_core::node::{Node, NodeType, TensorSpec};
 use thrml_core::state_tree::block_state_to_global;
-use indexmap::IndexMap;
-use std::collections::HashMap;
-use crate::sampler::AbstractConditionalSampler;
 
 /// A SuperBlock is a collection of blocks that will be sampled at the same "time"
 /// specifically, they will be sampled separately, but without updating the state
@@ -34,7 +34,7 @@ impl BlockGibbsSpec {
         let mut sampling_order = Vec::new();
         let mut superblocks = Vec::new();
         let mut i = 0;
-        
+
         for super_block in free_super_blocks {
             superblocks.push(super_block.clone());
             let mut sampling_group = Vec::new();
@@ -45,14 +45,15 @@ impl BlockGibbsSpec {
             }
             sampling_order.push(sampling_group);
         }
-        
-        let all_blocks: Vec<Block> = free_blocks.iter()
+
+        let all_blocks: Vec<Block> = free_blocks
+            .iter()
             .chain(clamped_blocks.iter())
             .cloned()
             .collect();
-        
+
         let spec = BlockSpec::new(all_blocks, node_shape_dtypes)?;
-        
+
         Ok(BlockGibbsSpec {
             spec,
             free_blocks,
@@ -69,7 +70,8 @@ pub struct BlockSamplingProgram {
     pub samplers: Vec<Box<dyn AbstractConditionalSampler>>,
     // Store indices as GPU tensors for direct gather operations
     pub per_block_interaction_global_inds: Vec<Vec<Vec<usize>>>,
-    pub per_block_interaction_global_slices: Vec<Vec<Vec<Tensor<WgpuBackend, 2, burn::tensor::Int>>>>,
+    pub per_block_interaction_global_slices:
+        Vec<Vec<Vec<Tensor<WgpuBackend, 2, burn::tensor::Int>>>>,
     // Sliced interactions are 3D tensors [n_nodes, n_interactions, tail_dim]
     pub per_block_interactions: Vec<Vec<Tensor<WgpuBackend, 3>>>,
     pub per_block_interaction_active: Vec<Vec<Tensor<WgpuBackend, 2>>>,
@@ -91,12 +93,10 @@ impl BlockSamplingProgram {
 
         // First, construct a map from every head node to each interaction it shows up in
         let mut head_node_map: HashMap<Node, Vec<(usize, usize)>> = HashMap::new();
-        
+
         for (i, interaction_group) in interaction_groups.iter().enumerate() {
             for (j, node) in interaction_group.head_nodes.nodes().iter().enumerate() {
-                head_node_map.entry(node.clone())
-                    .or_default()
-                    .push((i, j));
+                head_node_map.entry(node.clone()).or_default().push((i, j));
             }
         }
 
@@ -105,26 +105,23 @@ impl BlockSamplingProgram {
         let mut max_n_interactions: Vec<Vec<usize>> = Vec::new();
 
         for block in &gibbs_spec.free_blocks {
-            let mut this_block_interaction_info: Vec<Vec<Vec<usize>>> = 
+            let mut this_block_interaction_info: Vec<Vec<Vec<usize>>> =
                 vec![vec![Vec::new(); block.len()]; interaction_groups.len()];
-        
+
             for (j, node) in block.nodes().iter().enumerate() {
                 if let Some(this_node_interaction_info) = head_node_map.get(node) {
                     for (interaction_idx, position_in_interaction) in this_node_interaction_info {
-                        this_block_interaction_info[*interaction_idx][j].push(*position_in_interaction);
+                        this_block_interaction_info[*interaction_idx][j]
+                            .push(*position_in_interaction);
                     }
                 }
             }
-        
-            let this_max_n: Vec<usize> = this_block_interaction_info.iter()
-                .map(|this_int| {
-                    this_int.iter()
-                        .map(|x| x.len())
-                        .max()
-                        .unwrap_or(0)
-                })
+
+            let this_max_n: Vec<usize> = this_block_interaction_info
+                .iter()
+                .map(|this_int| this_int.iter().map(|x| x.len()).max().unwrap_or(0))
                 .collect();
-        
+
             interaction_inds.push(this_block_interaction_info);
             max_n_interactions.push(this_max_n);
         }
@@ -134,32 +131,38 @@ impl BlockSamplingProgram {
         let mut per_block_interactions: Vec<Vec<Tensor<WgpuBackend, 3>>> = Vec::new();
         let mut per_block_interaction_active: Vec<Vec<Tensor<WgpuBackend, 2>>> = Vec::new();
         let mut per_block_interaction_global_inds: Vec<Vec<Vec<usize>>> = Vec::new();
-        let mut per_block_interaction_global_slices: Vec<Vec<Vec<Tensor<WgpuBackend, 2, burn::tensor::Int>>>> = Vec::new();
+        let mut per_block_interaction_global_slices: Vec<
+            Vec<Vec<Tensor<WgpuBackend, 2, burn::tensor::Int>>>,
+        > = Vec::new();
 
         let device = burn::backend::wgpu::WgpuDevice::default();
 
-        for (block, block_interact_inds, block_n_interactions) in 
-            itertools::izip!(&gibbs_spec.free_blocks, &interaction_inds, &max_n_interactions) {
-        
+        for (block, block_interact_inds, block_n_interactions) in itertools::izip!(
+            &gibbs_spec.free_blocks,
+            &interaction_inds,
+            &max_n_interactions
+        ) {
             let mut this_block_interactions = Vec::new();
             let mut this_block_active = Vec::new();
             let mut this_block_global_inds = Vec::new();
             let mut this_block_global_slices = Vec::new();
 
-            for (interaction_group, interact_inds, n_interactions) in 
-                itertools::izip!(interaction_groups.iter(), block_interact_inds.iter(), block_n_interactions.iter()) {
-            
+            for (interaction_group, interact_inds, n_interactions) in itertools::izip!(
+                interaction_groups.iter(),
+                block_interact_inds.iter(),
+                block_n_interactions.iter()
+            ) {
                 if *n_interactions > 0 {
                     let n_nodes = block.len();
-                
+
                     // Build interaction_slices: (n_nodes, n_interactions) array of indices
                     let mut interaction_slices_data = vec![0i32; n_nodes * n_interactions];
                     let mut active_data = vec![false; n_nodes * n_interactions];
-                
+
                     // Build global_inds and global_slices for each tail block
                     let mut global_inds = Vec::new();
                     let mut global_slices_data: Vec<Vec<i32>> = Vec::new();
-                
+
                     for tail_block in &interaction_group.tail_nodes {
                         let (sd_ind, _) = gibbs_spec.spec.get_node_locations(tail_block)?;
                         global_inds.push(sd_ind);
@@ -175,9 +178,13 @@ impl BlockSamplingProgram {
                             // Fill global slices for each tail block
                             for (k, tail_block) in interaction_group.tail_nodes.iter().enumerate() {
                                 let node = &tail_block.nodes()[*ind];
-                                let (_, pos) = gibbs_spec.spec.node_global_location_map
+                                let (_, pos) = gibbs_spec
+                                    .spec
+                                    .node_global_location_map
                                     .get(node)
-                                    .ok_or_else(|| "Node not found in global location map".to_string())?;
+                                    .ok_or_else(|| {
+                                    "Node not found in global location map".to_string()
+                                })?;
                                 global_slices_data[k][i * n_interactions + j] = *pos as i32;
                             }
                         }
@@ -185,10 +192,11 @@ impl BlockSamplingProgram {
 
                     // Create interaction_slices tensor (2D Int tensor)
                     // from_data infers shape from data, so we need to reshape after creation
-                    let interaction_slices_1d: Tensor<WgpuBackend, 1, burn::tensor::Int> = 
+                    let interaction_slices_1d: Tensor<WgpuBackend, 1, burn::tensor::Int> =
                         Tensor::from_data(interaction_slices_data.as_slice(), &device);
-                    let interaction_slices = interaction_slices_1d.reshape([n_nodes as i32, *n_interactions as i32]);
-                
+                    let interaction_slices =
+                        interaction_slices_1d.reshape([n_nodes as i32, *n_interactions as i32]);
+
                     // Slice the interaction tensor using interaction_slices
                     // The interaction tensor is 2D with shape [head_nodes, tail_dim]
                     // The Python code uses jnp.take(x, sl, axis=0) where sl is 2D (n_nodes, n_interactions)
@@ -196,29 +204,38 @@ impl BlockSamplingProgram {
                     // We flatten the indices, gather, then reshape to [n_nodes, n_interactions, tail_dim]
                     let interaction_dims = interaction_group.interaction.dims();
                     let tail_dim = interaction_dims[1];
-                    
+
                     // Flatten interaction_slices to 1D for gathering
-                    let flat_indices = interaction_slices.clone().reshape([(n_nodes * n_interactions) as i32]);
+                    let flat_indices = interaction_slices
+                        .clone()
+                        .reshape([(n_nodes * n_interactions) as i32]);
                     // Gather from interaction tensor along first dimension
                     // This gives us [n_nodes * n_interactions, tail_dim]
-                    let gathered: Tensor<WgpuBackend, 2> = interaction_group.interaction.clone().select(0, flat_indices);
+                    let gathered: Tensor<WgpuBackend, 2> = interaction_group
+                        .interaction
+                        .clone()
+                        .select(0, flat_indices);
                     // Reshape to [n_nodes, n_interactions, tail_dim]
-                    let sliced_interaction: Tensor<WgpuBackend, 3> = gathered.reshape([n_nodes as i32, *n_interactions as i32, tail_dim as i32]);
+                    let sliced_interaction: Tensor<WgpuBackend, 3> =
+                        gathered.reshape([n_nodes as i32, *n_interactions as i32, tail_dim as i32]);
 
                     // Create active tensor (2D Bool tensor converted to Float for compatibility)
-                    let active_bool_1d: Tensor<WgpuBackend, 1, burn::tensor::Bool> = 
+                    let active_bool_1d: Tensor<WgpuBackend, 1, burn::tensor::Bool> =
                         Tensor::from_data(active_data.as_slice(), &device);
-                    let active_bool = active_bool_1d.reshape([n_nodes as i32, *n_interactions as i32]);
+                    let active_bool =
+                        active_bool_1d.reshape([n_nodes as i32, *n_interactions as i32]);
                     let active = active_bool.float();
 
                     // Create global slices tensors (2D Int tensors)
-                    let global_slices: Vec<Tensor<WgpuBackend, 2, burn::tensor::Int>> = global_slices_data.iter()
-                        .map(|data| {
-                            let tensor_1d: Tensor<WgpuBackend, 1, burn::tensor::Int> = 
-                                Tensor::from_data(data.as_slice(), &device);
-                            tensor_1d.reshape([n_nodes as i32, *n_interactions as i32])
-                        })
-                        .collect();
+                    let global_slices: Vec<Tensor<WgpuBackend, 2, burn::tensor::Int>> =
+                        global_slices_data
+                            .iter()
+                            .map(|data| {
+                                let tensor_1d: Tensor<WgpuBackend, 1, burn::tensor::Int> =
+                                    Tensor::from_data(data.as_slice(), &device);
+                                tensor_1d.reshape([n_nodes as i32, *n_interactions as i32])
+                            })
+                            .collect();
 
                     // Store the sliced interaction tensor directly (3D: [n_nodes, n_interactions, tail_dim])
                     this_block_interactions.push(sliced_interaction);
@@ -243,9 +260,9 @@ impl BlockSamplingProgram {
             per_block_interaction_active,
         })
     }
-    
+
     /// Sample a single block using the current state.
-    /// 
+    ///
     /// This function is generic over StateLeaf, but in practice works with Tensor<WgpuBackend, 1>.
     /// The sampler interface currently expects Tensor types, so we constrain to that.
     pub fn sample_single_block(
@@ -257,20 +274,26 @@ impl BlockSamplingProgram {
         device: &burn::backend::wgpu::WgpuDevice,
     ) -> Tensor<WgpuBackend, 1> {
         // Build global state (concatenate free + clamped)
-        let combined_state: Vec<Tensor<WgpuBackend, 1>> = state_free.iter()
+        let combined_state: Vec<Tensor<WgpuBackend, 1>> = state_free
+            .iter()
             .chain(clamp_state.iter())
             .cloned()
             .collect();
         let global_state = block_state_to_global(&combined_state, &self.gibbs_spec.spec);
-        
+
         // Extract neighbor states using precomputed slices
         let mut all_interaction_states = Vec::new();
         if block_idx < self.per_block_interaction_global_slices.len() {
-            for (interaction_global_inds, interaction_slices) in 
-                self.per_block_interaction_global_inds[block_idx].iter()
-                    .zip(self.per_block_interaction_global_slices[block_idx].iter()) {
+            for (interaction_global_inds, interaction_slices) in self
+                .per_block_interaction_global_inds[block_idx]
+                .iter()
+                .zip(self.per_block_interaction_global_slices[block_idx].iter())
+            {
                 let mut this_interaction_states = Vec::new();
-                for (ind, sl) in interaction_global_inds.iter().zip(interaction_slices.iter()) {
+                for (ind, sl) in interaction_global_inds
+                    .iter()
+                    .zip(interaction_slices.iter())
+                {
                     // Use the 2D slice tensor to gather from global state
                     // The slice tensor has shape [n_nodes, n_interactions]
                     // We need to flatten it and use it to gather from global_state[*ind]
@@ -285,17 +308,21 @@ impl BlockSamplingProgram {
                 all_interaction_states.push(this_interaction_states);
             }
         }
-        
+
         // Get output spec for this block
         let this_block = &self.gibbs_spec.free_blocks[block_idx];
         let node_type = this_block.node_type();
-        let output_spec = self.gibbs_spec.spec.node_shape_dtypes.get(node_type)
+        let output_spec = self
+            .gibbs_spec
+            .spec
+            .node_shape_dtypes
+            .get(node_type)
             .expect("Node type not found in node_shape_dtypes");
-        
+
         // Resize spec to match block length
         let mut resized_spec = output_spec.clone();
         resized_spec.shape = vec![this_block.len()];
-        
+
         // Call sampler
         let sampler = &self.samplers[block_idx];
         sampler.sample(

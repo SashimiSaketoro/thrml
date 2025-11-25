@@ -7,4 +7,3 @@ fn test_gpu_initialization() {
     let tensor = burn::tensor::Tensor::<WgpuBackend, 1>::zeros([4], &device);
     assert_eq!(tensor.dims(), [4]);
 }
-

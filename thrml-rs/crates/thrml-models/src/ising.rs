@@ -1,26 +1,26 @@
+use crate::discrete_ebm::SpinEBMFactor;
+use crate::ebm::AbstractEBM;
+use crate::factor::AbstractFactor;
 /// Ising Energy-Based Model implementation.
-/// 
+///
 /// The Ising model defines an energy function:
 /// E(s) = -β * (Σ_i b_i * s_i + Σ_(i,j) J_ij * s_i * s_j)
-/// 
+///
 /// where s_i are spin variables, b_i are biases, J_ij are coupling weights,
 /// and β is the inverse temperature.
-
-use burn::tensor::{Tensor, Distribution};
+use burn::tensor::{Distribution, Tensor};
+use indexmap::IndexMap;
 use thrml_core::backend::WgpuBackend;
 use thrml_core::block::Block;
 use thrml_core::interaction::InteractionGroup;
 use thrml_core::node::{Node, NodeType, TensorSpec};
-use thrml_samplers::{BlockGibbsSpec, BlockSamplingProgram, SamplingSchedule, SpinGibbsConditional};
 use thrml_samplers::rng::RngKey;
-use indexmap::IndexMap;
-use crate::discrete_ebm::SpinEBMFactor;
-use crate::factor::AbstractFactor;
-use crate::ebm::AbstractEBM;
-
+use thrml_samplers::{
+    BlockGibbsSpec, BlockSamplingProgram, SamplingSchedule, SpinGibbsConditional,
+};
 
 /// An EBM with the Ising energy function.
-/// 
+///
 /// E(s) = -β * (Σ_i b_i * s_i + Σ_(i,j) J_ij * s_i * s_j)
 pub struct IsingEBM {
     pub nodes: Vec<Node>,
@@ -46,7 +46,7 @@ impl IsingEBM {
         } else {
             NodeType::Spin
         };
-        
+
         let mut node_shape_dtypes = IndexMap::new();
         node_shape_dtypes.insert(
             node_type,
@@ -55,7 +55,7 @@ impl IsingEBM {
                 dtype: burn::tensor::DType::Bool,
             },
         );
-        
+
         IsingEBM {
             nodes,
             biases,
@@ -65,55 +65,52 @@ impl IsingEBM {
             node_shape_dtypes,
         }
     }
-    
+
     /// Get the factors that make up this Ising EBM.
-    /// 
+    ///
     /// Returns two SpinEBMFactors:
     /// 1. Bias factor: for each node, energy contribution is b_i * s_i
     /// 2. Edge factor: for each edge (i,j), energy contribution is J_ij * s_i * s_j
     pub fn get_factors(&self, _device: &burn::backend::wgpu::WgpuDevice) -> Vec<SpinEBMFactor> {
         let mut factors = Vec::new();
-        
+
         // Bias factor: SpinEBMFactor with single node group
         if !self.nodes.is_empty() {
-            let bias_block = Block::new(self.nodes.clone())
-                .expect("Failed to create bias block");
-            
+            let bias_block = Block::new(self.nodes.clone()).expect("Failed to create bias block");
+
             // Weights for bias: beta * biases, shaped as [n_nodes, 1, 1] for 3D tensor
             let scaled_biases = self.beta.clone() * self.biases.clone();
             let n_nodes = self.nodes.len();
-            let bias_weights: Tensor<WgpuBackend, 3> = scaled_biases
-                .reshape([n_nodes as i32, 1, 1]);
-            
+            let bias_weights: Tensor<WgpuBackend, 3> =
+                scaled_biases.reshape([n_nodes as i32, 1, 1]);
+
             if let Ok(factor) = SpinEBMFactor::new(vec![bias_block], bias_weights) {
                 factors.push(factor);
             }
         }
-        
+
         // Edge factor: SpinEBMFactor with two node groups (edge endpoints)
         if !self.edges.is_empty() {
             let edge_nodes_0: Vec<Node> = self.edges.iter().map(|(n, _)| n.clone()).collect();
             let edge_nodes_1: Vec<Node> = self.edges.iter().map(|(_, n)| n.clone()).collect();
-            
-            let edge_block_0 = Block::new(edge_nodes_0)
-                .expect("Failed to create edge block 0");
-            let edge_block_1 = Block::new(edge_nodes_1)
-                .expect("Failed to create edge block 1");
-            
+
+            let edge_block_0 = Block::new(edge_nodes_0).expect("Failed to create edge block 0");
+            let edge_block_1 = Block::new(edge_nodes_1).expect("Failed to create edge block 1");
+
             // Weights for edges: beta * weights, shaped as [n_edges, 1, 1]
             let scaled_weights = self.beta.clone() * self.weights.clone();
             let n_edges = self.edges.len();
-            let edge_weights: Tensor<WgpuBackend, 3> = scaled_weights
-                .reshape([n_edges as i32, 1, 1]);
-            
+            let edge_weights: Tensor<WgpuBackend, 3> =
+                scaled_weights.reshape([n_edges as i32, 1, 1]);
+
             if let Ok(factor) = SpinEBMFactor::new(vec![edge_block_0, edge_block_1], edge_weights) {
                 factors.push(factor);
             }
         }
-        
+
         factors
     }
-    
+
     /// Get the node shape/dtype specification for this model.
     pub fn node_shape_dtypes(&self) -> &IndexMap<NodeType, TensorSpec> {
         &self.node_shape_dtypes
@@ -136,45 +133,52 @@ impl AbstractEBM for IsingEBM {
         } else {
             return Tensor::zeros([1], device);
         };
-        
+
         // Convert bool state to spin state: s = 2*x - 1 where x ∈ {0, 1}
         let spin_state = node_state.clone() * 2.0 - 1.0;
-        
+
         // Get beta value
-        let beta_data: Vec<f32> = self.beta.clone()
-            .into_data()
-            .to_vec()
-            .expect("read beta");
+        let beta_data: Vec<f32> = self.beta.clone().into_data().to_vec().expect("read beta");
         let beta = beta_data[0];
-        
+
         // Bias contribution: Σ_i b_i * s_i
-        let bias_data: Vec<f32> = self.biases.clone()
+        let bias_data: Vec<f32> = self
+            .biases
+            .clone()
             .into_data()
             .to_vec()
             .expect("read biases");
-        let spin_data: Vec<f32> = spin_state.clone()
+        let spin_data: Vec<f32> = spin_state
+            .clone()
             .into_data()
             .to_vec()
             .expect("read spin state");
-        
-        let bias_energy: f32 = bias_data.iter()
+
+        let bias_energy: f32 = bias_data
+            .iter()
             .zip(spin_data.iter())
             .map(|(b, s)| b * s)
             .sum();
-        
+
         // Edge contribution: Σ_(i,j) J_ij * s_i * s_j
         // Need to map nodes to indices
-        let node_to_idx: std::collections::HashMap<_, _> = self.nodes.iter()
+        let node_to_idx: std::collections::HashMap<_, _> = self
+            .nodes
+            .iter()
             .enumerate()
             .map(|(i, n)| (n.id(), i))
             .collect();
-        
-        let weight_data: Vec<f32> = self.weights.clone()
+
+        let weight_data: Vec<f32> = self
+            .weights
+            .clone()
             .into_data()
             .to_vec()
             .expect("read weights");
-        
-        let edge_energy: f32 = self.edges.iter()
+
+        let edge_energy: f32 = self
+            .edges
+            .iter()
             .zip(weight_data.iter())
             .map(|((n1, n2), w)| {
                 let idx1 = *node_to_idx.get(&n1.id()).unwrap_or(&0);
@@ -182,10 +186,10 @@ impl AbstractEBM for IsingEBM {
                 w * spin_data.get(idx1).unwrap_or(&0.0) * spin_data.get(idx2).unwrap_or(&0.0)
             })
             .sum();
-        
+
         // Total energy = -beta * (bias_energy + edge_energy)
         let total = -beta * (bias_energy + edge_energy);
-        
+
         Tensor::from_data(vec![total].as_slice(), device)
     }
 }
@@ -194,7 +198,7 @@ impl AbstractEBM for IsingEBM {
 pub type SuperBlock = Block;
 
 /// A sampling program specialized for Ising models.
-/// 
+///
 /// Uses SpinGibbsConditional for all blocks.
 pub struct IsingSamplingProgram {
     pub program: BlockSamplingProgram,
@@ -202,9 +206,9 @@ pub struct IsingSamplingProgram {
 
 impl IsingSamplingProgram {
     /// Create a new Ising sampling program.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `ebm` - The Ising EBM to sample from
     /// * `free_blocks` - List of blocks that are free to vary
     /// * `clamped_blocks` - List of blocks that are held fixed
@@ -216,23 +220,23 @@ impl IsingSamplingProgram {
         device: &burn::backend::wgpu::WgpuDevice,
     ) -> Result<Self, String> {
         // Create superblocks (each free block is its own superblock for Ising)
-        let superblocks: Vec<Vec<Block>> = free_blocks.iter()
-            .map(|b| vec![b.clone()])
-            .collect();
-        
+        let superblocks: Vec<Vec<Block>> = free_blocks.iter().map(|b| vec![b.clone()]).collect();
+
         // Create BlockGibbsSpec
-        let gibbs_spec = BlockGibbsSpec::new(
-            superblocks,
-            clamped_blocks,
-            ebm.node_shape_dtypes.clone(),
-        )?;
-        
+        let gibbs_spec =
+            BlockGibbsSpec::new(superblocks, clamped_blocks, ebm.node_shape_dtypes.clone())?;
+
         // Create samplers (one SpinGibbsConditional per free block)
-        let samplers: Vec<Box<dyn thrml_samplers::sampler::AbstractConditionalSampler>> = 
-            gibbs_spec.free_blocks.iter()
-                .map(|_| Box::new(SpinGibbsConditional::new()) as Box<dyn thrml_samplers::sampler::AbstractConditionalSampler>)
+        let samplers: Vec<Box<dyn thrml_samplers::sampler::AbstractConditionalSampler>> =
+            gibbs_spec
+                .free_blocks
+                .iter()
+                .map(|_| {
+                    Box::new(SpinGibbsConditional::new())
+                        as Box<dyn thrml_samplers::sampler::AbstractConditionalSampler>
+                })
                 .collect();
-        
+
         // Get interaction groups from factors and convert to InteractionGroup
         let factors = ebm.get_factors(device);
         let mut interaction_groups: Vec<InteractionGroup> = Vec::new();
@@ -244,24 +248,33 @@ impl IsingSamplingProgram {
                 let weight_dims = fg.interaction.weights.dims();
                 let weights_2d = if weight_dims.len() == 3 && weight_dims[2] == 1 {
                     // [batch, dim, 1] -> [batch, dim]
-                    fg.interaction.weights.clone().reshape([weight_dims[0] as i32, weight_dims[1] as i32])
+                    fg.interaction
+                        .weights
+                        .clone()
+                        .reshape([weight_dims[0] as i32, weight_dims[1] as i32])
                 } else if weight_dims.len() == 3 {
                     // Flatten trailing dimensions
                     let trailing_size = weight_dims[1] * weight_dims[2];
-                    fg.interaction.weights.clone().reshape([weight_dims[0] as i32, trailing_size as i32])
+                    fg.interaction
+                        .weights
+                        .clone()
+                        .reshape([weight_dims[0] as i32, trailing_size as i32])
                 } else {
-                    fg.interaction.weights.clone().reshape([weight_dims[0] as i32, 1])
+                    fg.interaction
+                        .weights
+                        .clone()
+                        .reshape([weight_dims[0] as i32, 1])
                 };
-                
+
                 if let Ok(ig) = InteractionGroup::new(weights_2d, fg.head_nodes, fg.tail_nodes) {
                     interaction_groups.push(ig);
                 }
             }
         }
-        
+
         // Create the sampling program
         let program = BlockSamplingProgram::new(gibbs_spec, samplers, interaction_groups)?;
-        
+
         Ok(IsingSamplingProgram { program })
     }
 }
@@ -276,6 +289,8 @@ pub struct IsingTrainingSpec {
 }
 
 impl IsingTrainingSpec {
+    // Note: Extra `device` arg compared to Python API is required for Burn tensor operations
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ebm: IsingEBM,
         data_blocks: Vec<Block>,
@@ -287,25 +302,18 @@ impl IsingTrainingSpec {
         device: &burn::backend::wgpu::WgpuDevice,
     ) -> Result<Self, String> {
         // Positive phase: sample hidden given visible (clamped data + conditioning)
-        let clamped_positive: Vec<Block> = data_blocks.iter()
+        let clamped_positive: Vec<Block> = data_blocks
+            .iter()
             .chain(conditioning_blocks.iter())
             .cloned()
             .collect();
-        let program_positive = IsingSamplingProgram::new(
-            &ebm,
-            positive_sampling_blocks,
-            clamped_positive,
-            device,
-        )?;
-        
+        let program_positive =
+            IsingSamplingProgram::new(&ebm, positive_sampling_blocks, clamped_positive, device)?;
+
         // Negative phase: sample all (only condition on conditioning blocks)
-        let program_negative = IsingSamplingProgram::new(
-            &ebm,
-            negative_sampling_blocks,
-            conditioning_blocks,
-            device,
-        )?;
-        
+        let program_negative =
+            IsingSamplingProgram::new(&ebm, negative_sampling_blocks, conditioning_blocks, device)?;
+
         Ok(IsingTrainingSpec {
             ebm,
             program_positive,
@@ -320,9 +328,9 @@ impl IsingTrainingSpec {
 pub type Edge = (Node, Node);
 
 /// Estimate the first and second moments of an Ising model Boltzmann distribution via sampling.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `key` - RNG key for reproducibility
 /// * `first_moment_nodes` - Nodes for which to estimate first moments
 /// * `second_moment_edges` - Edges for which to estimate second moments
@@ -331,10 +339,12 @@ pub type Edge = (Node, Node);
 /// * `init_state` - Initial state for the sampling chain
 /// * `clamped_data` - Values for clamped nodes
 /// * `device` - Device for tensor operations
-/// 
+///
 /// # Returns
-/// 
+///
 /// Tuple of (node_moments, edge_moments) - first and second moment estimates
+// Note: Extra `device` arg compared to Python API is required for Burn tensor operations
+#[allow(clippy::too_many_arguments)]
 pub fn estimate_moments(
     key: RngKey,
     first_moment_nodes: &[Node],
@@ -348,17 +358,15 @@ pub fn estimate_moments(
     use thrml_observers::moment::MomentAccumulatorObserver;
     use thrml_observers::observer::AbstractObserver;
     use thrml_samplers::sampling::sample_with_observation;
-    
+
     // Build moment spec: first moments (individual nodes) + second moments (edges)
-    let moment_spec = MomentAccumulatorObserver::ising_moment_spec(
-        first_moment_nodes,
-        second_moment_edges,
-    );
-    
+    let moment_spec =
+        MomentAccumulatorObserver::ising_moment_spec(first_moment_nodes, second_moment_edges);
+
     // Create observer with spin transform (bool -> ±1)
     let observer = MomentAccumulatorObserver::new(moment_spec, true);
     let init_carry = observer.init(device);
-    
+
     // Run sampling with observation
     let (final_carry, _observations) = sample_with_observation(
         key,
@@ -370,35 +378,35 @@ pub fn estimate_moments(
         &observer,
         device,
     )?;
-    
+
     // Divide accumulated sums by n_samples to get averages
     let n_samples = schedule.n_samples as f32;
-    
+
     let node_moments = if !final_carry.is_empty() {
         final_carry[0].clone().div_scalar(n_samples)
     } else {
         Tensor::zeros([0], device)
     };
-    
+
     let edge_moments = if final_carry.len() > 1 {
         final_carry[1].clone().div_scalar(n_samples)
     } else {
         Tensor::zeros([0], device)
     };
-    
+
     Ok((node_moments, edge_moments))
 }
 
 /// Estimate the KL-divergence gradients of an Ising model.
-/// 
+///
 /// Uses the standard two-term Monte Carlo estimator:
 /// - Δb = -β(⟨sᵢ⟩₊ - ⟨sᵢ⟩₋)
 /// - Δw = -β(⟨sᵢsⱼ⟩₊ - ⟨sᵢsⱼ⟩₋)
-/// 
+///
 /// where ⟨·⟩₊ is the positive phase (data-clamped) and ⟨·⟩₋ is the negative phase.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `key` - RNG key
 /// * `training_spec` - IsingTrainingSpec containing the model and programs
 /// * `bias_nodes` - Nodes for bias gradients
@@ -408,10 +416,12 @@ pub fn estimate_moments(
 /// * `init_state_positive` - Initial state for positive chain
 /// * `init_state_negative` - Initial state for negative chain
 /// * `device` - Device for tensor operations
-/// 
+///
 /// # Returns
-/// 
+///
 /// Tuple of (grad_weights, grad_biases)
+// Note: Extra `device` arg compared to Python API is required for Burn tensor operations
+#[allow(clippy::too_many_arguments)]
 pub fn estimate_kl_grad(
     key: RngKey,
     training_spec: &IsingTrainingSpec,
@@ -424,10 +434,10 @@ pub fn estimate_kl_grad(
     device: &burn::backend::wgpu::WgpuDevice,
 ) -> Result<(Tensor<WgpuBackend, 1>, Tensor<WgpuBackend, 1>), String> {
     let (key_pos, key_neg) = key.split_two();
-    
+
     // For simplicity, we'll process the first batch only
     // A full implementation would vmap over batches
-    
+
     // Positive phase: estimate moments with data clamped
     // Combine data with conditioning values as clamped state
     let mut clamped_pos: Vec<Tensor<WgpuBackend, 1>> = Vec::new();
@@ -443,7 +453,7 @@ pub fn estimate_kl_grad(
     for c in conditioning_values {
         clamped_pos.push(c.clone());
     }
-    
+
     let (moms_b_pos, moms_w_pos) = estimate_moments(
         key_pos,
         bias_nodes,
@@ -454,10 +464,10 @@ pub fn estimate_kl_grad(
         &clamped_pos,
         device,
     )?;
-    
+
     // Negative phase: estimate moments with only conditioning clamped
     let clamped_neg: Vec<Tensor<WgpuBackend, 1>> = conditioning_values.to_vec();
-    
+
     let (moms_b_neg, moms_w_neg) = estimate_moments(
         key_neg,
         bias_nodes,
@@ -468,25 +478,28 @@ pub fn estimate_kl_grad(
         &clamped_neg,
         device,
     )?;
-    
+
     // Compute gradients: Δ = -β(positive - negative)
-    let beta_data: Vec<f32> = training_spec.ebm.beta.clone()
+    let beta_data: Vec<f32> = training_spec
+        .ebm
+        .beta
+        .clone()
         .into_data()
         .to_vec()
         .expect("read beta");
     let beta = beta_data[0];
-    
+
     let grad_b = (moms_b_pos - moms_b_neg).mul_scalar(-beta);
     let grad_w = (moms_w_pos - moms_w_neg).mul_scalar(-beta);
-    
+
     Ok((grad_w, grad_b))
 }
 
 /// Initialize blocks according to the marginal bias (Hinton initialization).
-/// 
+///
 /// Each binary unit i in a block is sampled independently as:
 /// P(S_i = 1) = σ(β * h_i)
-/// 
+///
 /// where h_i is the bias of unit i and β is the inverse temperature.
 pub fn hinton_init(
     key: RngKey,
@@ -496,14 +509,16 @@ pub fn hinton_init(
     device: &burn::backend::wgpu::WgpuDevice,
 ) -> Vec<Tensor<WgpuBackend, 2>> {
     // Build node -> bias index map
-    let node_map: std::collections::HashMap<Node, usize> = model.nodes.iter()
+    let node_map: std::collections::HashMap<Node, usize> = model
+        .nodes
+        .iter()
         .enumerate()
         .map(|(i, node)| (node.clone(), i))
         .collect();
-    
+
     let mut data = Vec::new();
     let _keys = key.split(blocks.len());
-    
+
     for block in blocks.iter() {
         let block_len = block.len();
         if block_len == 0 {
@@ -512,41 +527,49 @@ pub fn hinton_init(
             data.push(Tensor::<WgpuBackend, 2>::zeros([batch_size, 0], device));
             continue;
         }
-        
+
         // Get bias indices for this block
-        let block_indices: Vec<i32> = block.nodes().iter()
+        let block_indices: Vec<i32> = block
+            .nodes()
+            .iter()
             .map(|node| node_map.get(node).copied().unwrap_or(0) as i32)
             .collect();
-        
+
         // Create index tensor
-        let indices: Tensor<WgpuBackend, 1, burn::tensor::Int> = Tensor::from_data(
-            block_indices.as_slice(),
-            device,
-        );
-        
+        let indices: Tensor<WgpuBackend, 1, burn::tensor::Int> =
+            Tensor::from_data(block_indices.as_slice(), device);
+
         // Get biases for this block
         let block_biases = model.biases.clone().select(0, indices);
-        
+
         // Compute probabilities: sigmoid(beta * biases)
-        let beta_scalar = model.beta.clone().into_data().to_vec::<f32>().expect("read beta")[0];
+        let beta_scalar = model
+            .beta
+            .clone()
+            .into_data()
+            .to_vec::<f32>()
+            .expect("read beta")[0];
         let probs = burn::tensor::activation::sigmoid(block_biases * beta_scalar);
-        
+
         // Sample Bernoulli for each batch
         let batch_size: usize = batch_shape.iter().product();
-        let probs_expanded = probs.clone().unsqueeze_dim::<2>(0).repeat_dim(0, batch_size);
-        
+        let probs_expanded = probs
+            .clone()
+            .unsqueeze_dim::<2>(0)
+            .repeat_dim(0, batch_size);
+
         // Generate uniform random values
         let uniform: Tensor<WgpuBackend, 2> = Tensor::random(
             [batch_size, block_len],
             Distribution::Uniform(0.0, 1.0),
             device,
         );
-        
+
         // Sample: output 1 if uniform < probs, else 0
         let samples = uniform.lower_equal(probs_expanded).float();
-        
+
         data.push(samples);
     }
-    
+
     data
 }
